@@ -14,20 +14,18 @@ class P2PNode:
     def __init__(self, host='localhost'):
         self.host = host
         self.port = START_PORT
-        self.peers = set()  # لیست همتایان
+        self.peers = set()  # ip:port
         self.chunks = {}  # {chunk_hash: data}
         self.chunk_locations = defaultdict(set)  # {chunk_hash: {peer_addresses}}
         self.running = False
         self.socket = None
         
     def start(self):
-        """شروع Node"""
+        """Start Node"""
         self.running = True
-
 
         self._create_start_listening_socket()
 
-        
         # Thread برای گوش دادن به اتصالات جدید
         listener_thread = threading.Thread(target=self._listen_for_connections)
         listener_thread.daemon = True
@@ -42,11 +40,20 @@ class P2PNode:
 
     def main_loop(self):
         while(self.running):
+
+            command = input("Enter command (h for help):")
+            if(command in ["h", 'help']):
+                print(
+                    """
+                    /create-job <file>: creating new job
+                    /attach-job <job-serial>: attching to a job
+                    """
+            )
             sleep(2)
 
     def _create_start_listening_socket(self):
 
-        while(END_PORT - self.port):
+        while(END_PORT+1 - self.port ):
             try:
                 self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 # self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -57,6 +64,10 @@ class P2PNode:
 
             except:
                 self.port +=1
+            
+        else:
+            print('❌ Not available port !')
+            self.stop()
         
 
 
@@ -72,6 +83,7 @@ class P2PNode:
                 thread.start()
             except:
                 print("Error listening ...")
+                self.stop()
                 break
                 
     def _handle_client(self, client_socket, address):
@@ -257,7 +269,7 @@ class P2PNode:
         self.running = False
         if self.socket:
             self.socket.close()
-        print("🔴 Node متوقف شد")
+        print("🔴 Node Stoped !")
 
 
 
@@ -287,5 +299,5 @@ if __name__ == "__main__":
     #     print(f"  {word}: {count}")
     
     # نگه داشتن Node برای تست
-    input("\n⏸️  Enter بزنید برای خروج...")
+    input("\n⏸️  Enter for exit ...")
     node.stop()
