@@ -26,13 +26,18 @@ class P2PNode:
 
         self._create_start_listening_socket()
 
-        # Thread برای گوش دادن به اتصالات جدید
+        # listen for new connections
         listener_thread = threading.Thread(target=self._listen_for_connections)
         listener_thread.daemon = True
         listener_thread.start()
         
-        # Thread برای کشف Nodeهای دیگر
+        # discover peers
         discovery_thread = threading.Thread(target=self._discover_peers)
+        discovery_thread.daemon = True
+        discovery_thread.start()        
+        
+        # check peers live
+        discovery_thread = threading.Thread(target=self._check_peers_live)
         discovery_thread.daemon = True
         discovery_thread.start()
 
@@ -137,7 +142,10 @@ class P2PNode:
             
         elif msg_type == 'LIST_CHUNKS':
             # لیست chunkهای موجود
-            return {'status': 'ok', 'chunks': list(self.chunks.keys())}
+            return {'status': 'ok', 'chunks': list(self.chunks.keys())}        
+        
+        elif msg_type == 'PEER_PING':
+            return {'status': 'ok'}
             
         return {'status': 'unknown_command'}
     
@@ -182,7 +190,27 @@ class P2PNode:
                 print("Error finding node ...")
                 break
             finally:
-                sleep(2)
+                sleep(2)    
+                
+    def _check_peers_live(self):
+
+        while self.running:
+            for peer_addr in self.peers.copy():
+                try:
+                    response = self._send_message(peer_addr, {
+                        'type': 'PEER_PING',
+                        'address': f"{self.host}:{self.port}"
+                    } , 1)
+                    if not response or response.get('status') != 'ok':
+                        self.peers.remove(peer_addr)
+                        print(f"Node disconnected : {peer_addr}")
+                except:
+                    self.peers.remove(peer_addr)
+                    print("Error finding node ...")
+                    print(f"Node disconnected : {peer_addr}")
+                finally:
+                    sleep(3)
+
         
     def _send_message(self, peer_addr, message, timeout=2):
         """send message to other peers"""
