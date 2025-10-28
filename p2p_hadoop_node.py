@@ -5,11 +5,15 @@ import hashlib
 import time
 import os
 from collections import defaultdict
+from time import sleep
+
+START_PORT = 5000
+END_PORT = 5050
 
 class P2PNode:
-    def __init__(self, host='localhost', port=5000):
+    def __init__(self, host='localhost'):
         self.host = host
-        self.port = port
+        self.port = START_PORT
         self.peers = set()  # لیست همتایان
         self.chunks = {}  # {chunk_hash: data}
         self.chunk_locations = defaultdict(set)  # {chunk_hash: {peer_addresses}}
@@ -19,12 +23,10 @@ class P2PNode:
     def start(self):
         """شروع Node"""
         self.running = True
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.socket.bind((self.host, self.port))
-        self.socket.listen(5)
-        
-        print(f"🟢 Node شروع شد: {self.host}:{self.port}")
+
+
+        self._create_start_listening_socket()
+
         
         # Thread برای گوش دادن به اتصالات جدید
         listener_thread = threading.Thread(target=self._listen_for_connections)
@@ -35,9 +37,30 @@ class P2PNode:
         discovery_thread = threading.Thread(target=self._discover_peers)
         discovery_thread.daemon = True
         discovery_thread.start()
+
+        self.main_loop()
+
+    def main_loop(self):
+        while(self.running):
+            sleep(2)
+
+    def _create_start_listening_socket(self):
+
+        while(END_PORT - self.port):
+            try:
+                self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                # self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                self.socket.bind((self.host, self.port))
+                self.socket.listen(5)
+                print(f"🟢 Node starts on:{self.host}:{self.port}")
+                break
+
+            except:
+                self.port +=1
         
+
+
     def _listen_for_connections(self):
-        """گوش دادن به اتصالات ورودی"""
         while self.running:
             try:
                 client_socket, address = self.socket.accept()
@@ -48,10 +71,10 @@ class P2PNode:
                 thread.daemon = True
                 thread.start()
             except:
+                print("Error listening ...")
                 break
                 
     def _handle_client(self, client_socket, address):
-        """مدیریت درخواست‌های دریافتی"""
         try:
             data = client_socket.recv(4096).decode('utf-8')
             if not data:
@@ -62,18 +85,19 @@ class P2PNode:
             
             client_socket.send(json.dumps(response).encode('utf-8'))
         except Exception as e:
-            print(f"❌ خطا در پردازش: {e}")
+            print(f"❌ Problem handling client!: {e}")
         finally:
             client_socket.close()
             
     def _process_message(self, message):
-        """پردازش پیام دریافتی"""
         msg_type = message.get('type')
         
         if msg_type == 'PEER_DISCOVERY':
-            # اضافه کردن peer جدید
+            # adding new peer
             peer_addr = message.get('address')
             self.peers.add(peer_addr)
+
+            print(f"🤝 New Peer found:{peer_addr}")
             return {'status': 'ok', 'address': f"{self.host}:{self.port}"}
             
         elif msg_type == 'STORE_CHUNK':
@@ -124,26 +148,32 @@ class P2PNode:
         return {}
     
     def _discover_peers(self):
-        """کشف Nodeهای دیگر در شبکه"""
-        # در اینجا می‌تونید broadcast UDP یا لیست ثابت استفاده کنید
-        # برای سادگی، از لیست portهای مشخص استفاده می‌کنیم
-        base_port = 5000
-        for port in range(base_port, base_port + 5):
-            if port != self.port:
-                peer_addr = f"localhost:{port}"
-                try:
-                    response = self._send_message(peer_addr, {
-                        'type': 'PEER_DISCOVERY',
-                        'address': f"{self.host}:{self.port}"
-                    })
-                    if response and response.get('status') == 'ok':
-                        self.peers.add(peer_addr)
-                        print(f"🤝 Peer جدید پیدا شد: {peer_addr}")
-                except:
-                    pass
+
+        while self.running:
+            try:
+                """Dicover new nodes"""
+                for port in range(START_PORT, END_PORT):
+                    if port != self.port:
+                        peer_addr = f"localhost:{port}"
+                        if(peer_addr not in self.peers):
+                            try:
+                                response = self._send_message(peer_addr, {
+                                    'type': 'PEER_DISCOVERY',
+                                    'address': f"{self.host}:{self.port}"
+                                })
+                                if response and response.get('status') == 'ok':
+                                    self.peers.add(peer_addr)
+                                    print(f"🤝 New Peer found:{peer_addr}")
+                            except:
+                                pass
+            except:
+                print("Error finding node ...")
+                break
+            finally:
+                sleep(2)
         
     def _send_message(self, peer_addr, message, timeout=2):
-        """ارسال پیام به peer دیگر"""
+        """send message to other peers"""
         try:
             host, port = peer_addr.split(':')
             port = int(port)
@@ -230,31 +260,31 @@ class P2PNode:
         print("🔴 Node متوقف شد")
 
 
+
+
+
 # مثال استفاده
 if __name__ == "__main__":
     # شروع Node
-    node = P2PNode(port=5000)
+    node = P2PNode()
     node.start()
     
     time.sleep(2)  # زمان برای کشف peerها
     
     # مثال: تقسیم و ذخیره یک متن
     sample_text = """
-    سلام این یک متن نمونه است برای تست سیستم توزیع شده
-    این سیستم قادر است داده ها را تقسیم کند
-    و آنها را بین nodeهای مختلف توزیع کند
-    سپس پردازش موازی را روی آنها انجام دهد
+        Lorem ipsum was conceived as filler text, form for for for atted in a certain way to enable the presentation of graphic elements in documents, without the need for fo
     """
     
-    print("\n📝 شروع پردازش...")
-    chunk_hashes = node.split_and_store(sample_text, chunk_size=50)
+    # print("\n📝 شروع پردازش...")
+    # chunk_hashes = node.split_and_store(sample_text, chunk_size=50)
     
-    # اجرای MapReduce برای شمارش کلمات
-    result = node.map_reduce(chunk_hashes, task_type='word_count')
+    # # اجرای MapReduce برای شمارش کلمات
+    # result = node.map_reduce(chunk_hashes, task_type='word_count')
     
-    print("\n📊 نتیجه شمارش کلمات:")
-    for word, count in sorted(result.items(), key=lambda x: x[1], reverse=True):
-        print(f"  {word}: {count}")
+    # print("\n📊 نتیجه شمارش کلمات:")
+    # for word, count in sorted(result.items(), key=lambda x: x[1], reverse=True):
+    #     print(f"  {word}: {count}")
     
     # نگه داشتن Node برای تست
     input("\n⏸️  Enter بزنید برای خروج...")
