@@ -8,17 +8,20 @@ from collections import defaultdict
 from time import sleep
 
 START_PORT = 5000
-END_PORT = 5050
+END_PORT = 5060
+
 
 class P2PNode:
     def __init__(self, host='localhost'):
         self.host = host
         self.port = START_PORT
         self.peers = set()  # ip:port
+        self.chunk_size = 512
         self.chunks = {}  # {chunk_hash: data}
         self.chunk_locations = defaultdict(set)  # {chunk_hash: {peer_addresses}}
         self.running = False
         self.socket = None
+        self.nodeLog = True
         
     def start(self):
         """Start Node"""
@@ -37,24 +40,66 @@ class P2PNode:
         discovery_thread.start()        
         
         # check peers live
-        discovery_thread = threading.Thread(target=self._check_peers_live)
-        discovery_thread.daemon = True
-        discovery_thread.start()
+        check_peers_live = threading.Thread(target=self._check_peers_live)
+        check_peers_live.daemon = True
+        check_peers_live.start()
 
         self.main_loop()
 
     def main_loop(self):
         while(self.running):
 
-            command = input("Enter command (h for help):")
+            command = input("Enter command (h for help): \n").strip()
+            instruction = command.split()
             if(command in ["h", 'help']):
                 print(
-                    """
-                    /create-job <file>: creating new job
-                    /attach-job <job-serial>: attching to a job
-                    """
+                    "/create-job <file>: creating new job" + "\n" +
+                    "/attach-job <job-serial>: attching to a job"+ "\n"
             )
-            sleep(2)
+                
+            if(instruction[0] == "/create-job"):
+
+                if len(instruction) > 1 and instruction[1]!="" :
+                    path = instruction[1]
+                    self.create_job(path)
+                else:
+                    print("<file> parameter required")
+
+
+            sleep(0.2)
+
+    def create_job(self, path):
+        
+        path.replace('\\ ', ' ').strip()
+        if path.startswith('"') and path.endswith('"'):
+            path = path[1:-1]
+        elif path.startswith("'") and path.endswith("'"):
+            path = path[1:-1]
+        if not os.path.isfile(path):
+            self.log("error : File not found" , "red")
+            return
+        # Get file size (in bytes)
+        size = os.path.getsize(path)
+        # Count lines
+        try:
+            with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                lines = sum(1 for _ in f)
+        except Exception as e:
+            return {"error": str(e)}
+
+        info =  {
+            "file_name": os.path.basename(path),
+            "path": os.path.abspath(path),
+            "size_bytes": size,
+            "line_count": lines
+        }
+    
+        # Save info as JSON file
+        with open(info['file_name']+ ".json", 'w', encoding='utf-8') as f:
+            json.dump(info, f, indent=4)
+
+        print(f"✅ Info saved to: {info['file_name']+ ".json"}")
+
 
     def _create_start_listening_socket(self):
 
@@ -64,14 +109,14 @@ class P2PNode:
                 # self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 self.socket.bind((self.host, self.port))
                 self.socket.listen(5)
-                print(f"🟢 Node starts on:{self.host}:{self.port}")
+                self.log(f"🟢 Node starts on:{self.host}:{self.port}")
                 break
 
             except:
                 self.port +=1
             
         else:
-            print('❌ Not available port !')
+            self.log('❌ Not available port !' , "red")
             self.stop()
         
 
@@ -87,7 +132,7 @@ class P2PNode:
                 thread.daemon = True
                 thread.start()
             except:
-                print("Error listening ...")
+                self.log("Error listening ...")
                 self.stop()
                 break
                 
@@ -102,7 +147,7 @@ class P2PNode:
             
             client_socket.send(json.dumps(response).encode('utf-8'))
         except Exception as e:
-            print(f"❌ Problem handling client!: {e}")
+            self.log(f"❌ Problem handling client!: {e}")
         finally:
             client_socket.close()
             
@@ -114,7 +159,7 @@ class P2PNode:
             peer_addr = message.get('address')
             self.peers.add(peer_addr)
 
-            print(f"🤝 New Peer found:{peer_addr}")
+            self.log(f"🤝 New Peer found:{peer_addr}" , 'green')
             return {'status': 'ok', 'address': f"{self.host}:{self.port}"}
             
         elif msg_type == 'STORE_CHUNK':
@@ -132,13 +177,14 @@ class P2PNode:
             return {'status': 'ok', 'data': data}
             
         elif msg_type == 'MAP_TASK':
-            # اجرای task پردازشی
-            chunk_hash = message.get('chunk_hash')
-            task_type = message.get('task_type')
-            chunk_data = self.chunks.get(chunk_hash, '')
+            pass
+            # # اجرای task پردازشی
+            # chunk_hash = message.get('chunk_hash')
+            # task_type = message.get('task_type')
+            # chunk_data = self.chunks.get(chunk_hash, '')
             
-            result = self._execute_map_task(chunk_data, task_type)
-            return {'status': 'ok', 'result': result}
+            # result = self._execute_map_task(chunk_data, task_type)
+            # return {'status': 'ok', 'result': result}
             
         elif msg_type == 'LIST_CHUNKS':
             # لیست chunkهای موجود
@@ -149,23 +195,6 @@ class P2PNode:
             
         return {'status': 'unknown_command'}
     
-    def _execute_map_task(self, data, task_type):
-        """اجرای وظیفه پردازشی"""
-        if task_type == 'word_count':
-            # شمارش کلمات
-            words = data.split()
-            word_count = defaultdict(int)
-            for word in words:
-                word = word.lower().strip('.,!?;:')
-                if word:
-                    word_count[word] += 1
-            return dict(word_count)
-        
-        elif task_type == 'line_count':
-            # شمارش خطوط
-            return {'lines': len(data.split('\n'))}
-            
-        return {}
     
     def _discover_peers(self):
 
@@ -183,11 +212,11 @@ class P2PNode:
                                 })
                                 if response and response.get('status') == 'ok':
                                     self.peers.add(peer_addr)
-                                    print(f"🤝 New Peer found:{peer_addr}")
+                                    self.log(f"🤝 New Peer found:{peer_addr}", 'green')
                             except:
                                 pass
             except:
-                print("Error finding node ...")
+                self.log("Error finding node ...")
                 break
             finally:
                 sleep(2)    
@@ -203,11 +232,11 @@ class P2PNode:
                     } , 1)
                     if not response or response.get('status') != 'ok':
                         self.peers.remove(peer_addr)
-                        print(f"Node disconnected : {peer_addr}")
+                        self.log(f"Node disconnected : {peer_addr}")
                 except:
                     self.peers.remove(peer_addr)
-                    print("Error finding node ...")
-                    print(f"Node disconnected : {peer_addr}")
+                    self.log("Error finding node ...", 'red')
+                    self.log(f"Node disconnected : {peer_addr}", "red")
                 finally:
                     sleep(3)
 
@@ -230,74 +259,30 @@ class P2PNode:
         except Exception as e:
             return None
     
-    def split_and_store(self, data, chunk_size=100):
-        """تقسیم داده به chunkها و ذخیره توزیع‌شده"""
-        chunks = []
-        for i in range(0, len(data), chunk_size):
-            chunk = data[i:i+chunk_size]
-            chunk_hash = hashlib.md5(chunk.encode()).hexdigest()
-            chunks.append((chunk_hash, chunk))
-        
-        # ذخیره محلی
-        for chunk_hash, chunk_data in chunks:
-            self.chunks[chunk_hash] = chunk_data
-        
-        # توزیع بین peerها
-        peer_list = list(self.peers)
-        for idx, (chunk_hash, chunk_data) in enumerate(chunks):
-            if peer_list:
-                # انتخاب peer برای ذخیره
-                peer = peer_list[idx % len(peer_list)]
-                response = self._send_message(peer, {
-                    'type': 'STORE_CHUNK',
-                    'hash': chunk_hash,
-                    'data': chunk_data
-                })
-                if response and response.get('status') == 'stored':
-                    self.chunk_locations[chunk_hash].add(peer)
-        
-        print(f"📦 {len(chunks)} chunk ایجاد و توزیع شد")
-        return [h for h, _ in chunks]
     
-    def map_reduce(self, chunk_hashes, task_type='word_count'):
-        """اجرای MapReduce روی chunkها"""
-        results = []
-        
-        # Map Phase
-        print("🗺️  Map Phase شروع شد...")
-        for chunk_hash in chunk_hashes:
-            # اگر chunk محلی داریم
-            if chunk_hash in self.chunks:
-                result = self._execute_map_task(self.chunks[chunk_hash], task_type)
-                results.append(result)
-            # اگر نه، از peer دیگر بگیریم
-            elif chunk_hash in self.chunk_locations:
-                peers = list(self.chunk_locations[chunk_hash])
-                for peer in peers:
-                    response = self._send_message(peer, {
-                        'type': 'MAP_TASK',
-                        'chunk_hash': chunk_hash,
-                        'task_type': task_type
-                    })
-                    if response and response.get('status') == 'ok':
-                        results.append(response['result'])
-                        break
-        
-        # Reduce Phase
-        print("🔄 Reduce Phase شروع شد...")
-        final_result = defaultdict(int)
-        for result in results:
-            for key, value in result.items():
-                final_result[key] += value
-        
-        return dict(final_result)
-    
+    def log(self, message, color = "white"):
+
+        if(not self.nodeLog ): return
+        colors = {
+            "red": "\033[91m",
+            "green": "\033[92m",
+            "yellow": "\033[93m",
+            "blue": "\033[94m",
+            "magenta": "\033[95m",
+            "cyan": "\033[96m",
+            "white": "\033[97m",
+        }
+        reset = "\033[0m"
+        color_code = colors.get(color.lower(), colors["white"])
+        print(f"\r{color_code}{message}{reset}")
+
+
     def stop(self):
-        """توقف Node"""
+        """Stop Node"""
         self.running = False
         if self.socket:
             self.socket.close()
-        print("🔴 Node Stoped !")
+        self.log("🔴 Node Stoped !" , "red")
 
 
 
