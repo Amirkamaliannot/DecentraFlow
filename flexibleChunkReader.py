@@ -8,9 +8,11 @@ import mmap
 class FlexibleChunkReader:
     
     def __init__(self, filepath: str, 
-                 items_per_chunk: int = 512, 
+                 items_per_chunk: int = 2048, 
                  delimiter: Union[str, bytes, None] = '\n',
-                 mode: str = 'line'):
+                 mode: str = 'line',
+                 total_items = 0 #just for loading
+                 ):
         """
         Args:
             filepath: مسیر فایل
@@ -27,6 +29,7 @@ class FlexibleChunkReader:
         self.delimiter = delimiter
         self.mode = mode
         self.file_size = os.path.getsize(filepath)
+        self.total_items = total_items
         
         if mode == 'line':
             self.delimiter = '\n'
@@ -35,10 +38,23 @@ class FlexibleChunkReader:
         
         # creating and saving indexes
         self.hash = self.get_file_hash()
-        self._build_index()
+
+        if(os.path.exists(self.hash+".index")):
+            try:
+                
+                self._load_item_positions()
+                self.total_items = len(self.item_positions) - 1
+                self.total_chunks = (self.total_items + self.items_per_chunk - 1) // self.items_per_chunk
+            except:
+                self._build_index()
+        else:
+            self._build_index()
+
+
         self._save_item_positions()
 
-    
+    # def handle_index
+
     def _build_index(self):
         print(f"🔍 Creating index ({self.mode} mode)...")
         
@@ -123,15 +139,12 @@ class FlexibleChunkReader:
         self.index_file = self.hash + '.index'
         if not self.item_positions:
             return
-        
-        print(len(self.item_positions))
 
         diffs = [self.item_positions[0]]
         for i in range(1, len(self.item_positions)):
             diffs.append(self.item_positions[i] - self.item_positions[i - 1])
 
         max_val = max(diffs)
-        print(max_val)
         if max_val <= 0xFF:
             typecode = 'B'  # 1 byte
         elif max_val <= 0xFFFF:
@@ -166,7 +179,11 @@ class FlexibleChunkReader:
         for diff in diffs:
             total += diff
             positions.append(total)
-        self.item_positions = positions
+
+        if(len(positions)-1 == self.total_items):
+            self.item_positions = positions
+        else:
+            raise Exception("Not Matched.")
                     
     def read_chunk(self, chunk_index: int) -> Optional[str]:
         """reading one chunk"""
@@ -305,7 +322,6 @@ class FlexibleChunkReader:
             for chunk in iter(lambda: f.read(128*1024*1024), b''):
                 hasher.update(chunk)
         
-        print (hasher.hexdigest())
         return hasher.hexdigest()
 
 # reader = FlexibleChunkReader('best-dns-wordlist.txt', items_per_chunk=256, mode='line')

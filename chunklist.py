@@ -18,7 +18,7 @@ class ChunkList:
         self.DflowHash = DflowHash
         self._chunks: list[Chunk] = []
         self._index_map = {}
-        self._filename = f"{DflowHash}.json"
+        self._filename = f"{DflowHash}.data"
         self._json_key = json_key
 
         if os.path.exists(self._filename):
@@ -101,7 +101,7 @@ class FileChunkList:
     def __init__(self, DflowHash):
 
         self.DflowHash = DflowHash
-        self._filename = DflowHash+"data2"
+        self._filename = DflowHash+".data"
         if not os.path.exists(self._filename):
             open(self._filename, 'a').close()
 

@@ -1,4 +1,4 @@
-from setting import Dflow_chunks_queue_limit 
+from setting import Dflow_chunks_queue_limit , chunk_size
 import json
 import os
 from datetime import datetime
@@ -6,7 +6,7 @@ from typing import List, Optional, Dict
 from flexibleChunkReader import FlexibleChunkReader
 from chunklist import Chunk , ChunkList , FileChunkList
 import random
-
+from functions import is_file_in_my_disk
     
 
 class DFlow:
@@ -36,6 +36,35 @@ class DFlow:
         self.chunks_queue:ChunkList = ChunkList(file_hash)
         self.chunks_queue_limit = Dflow_chunks_queue_limit
 
+
+    @classmethod
+    def from_dict(cls, data: dict , fileHandle: FlexibleChunkReader | None = None):
+        dflow = cls(
+            filepath=data['filepath'],
+            file_hash=data['file_hash'],
+            total_chunks=data['total_chunks'],
+            chunk_size=data['chunk_size'],
+            mode=data.get('mode', 'line'),
+            delimiter=data.get('delimiter', '\n'),
+            metadata=data.get('metadata', {}),
+            fileHandle = fileHandle
+        )
+        dflow.added_at = data.get('added_at', datetime.now().isoformat())
+        return dflow
+    
+    def to_dict(self) -> dict:
+        return {
+            'filepath': self.filepath,
+            'file_hash': self.file_hash,
+            'total_chunks': self.total_chunks,
+            'chunk_size': self.chunk_size,
+            'mode': self.mode,
+            'delimiter': self.delimiter,
+            'added_at': self.added_at,
+            'metadata': self.metadata,
+            'script': self.script,
+        }
+
     def start_queue(self):
 
         while (True):
@@ -49,9 +78,16 @@ class DFlow:
             except:
                 break
 
+    def fill_chunks_queue(self):
+        while(True):
+            if(len(self.chunks_queue) < self.chunks_queue_limit):
+                self.get_new_chunks()
+            else:
+                break
 
     def get_new_chunks(self):
         index = self.get_random_unused_chunck()
+        print(index)
         if(self.fileHandle):
             chunk_data = self.fileHandle.read_items(index)
             chunk = Chunk(index, chunk_data)
@@ -81,10 +117,13 @@ class DFlow:
 
     def get_random_unused_chunck(self):
         existing_indexes = set()
-        with open(self.file_hash+".data2", 'r', encoding='utf-8') as f:
-            for line in f:
-                c = json.loads(line)
-                existing_indexes.add(c["index"])
+        if os.path.exists(self.file_hash+".data"):
+            try:
+                with open(self.file_hash+".data", 'r', encoding='utf-8') as f:
+                    for line in f:
+                        c = json.loads(line)
+                        existing_indexes.add(c["index"])
+            except:pass
 
         all_indexes = set(range(0, self.total_chunks + 1))
         
@@ -101,13 +140,22 @@ class DFlowManager:
         self.json_file = json_file
         self.dflows: List[DFlow] = []
         self.load()
-    
+
+
+
     def load(self):
         if os.path.exists(self.json_file):
             try:
                 with open(self.json_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                    self.dflows = [DFlow.from_dict(d) for d in data]
+                    for dflow in data:
+                        if(is_file_in_my_disk(dflow['filepath'], dflow['file_hash'])):
+                            reader = FlexibleChunkReader(dflow['filepath'], items_per_chunk=dflow["chunk_size"], 
+                                 mode=dflow["mode"], delimiter=dflow["delimiter"], total_items=dflow["metadata"]['total_items'])
+                            self.dflows.append(DFlow.from_dict(dflow, reader))
+                        else:
+                            self.dflows.append(DFlow.from_dict(dflow))
+
                 print(f"✅ {len(self.dflows)} DFlow loaded from:{self.json_file}")
             except Exception as e:
                 print(f"❌ Loading Error: {e}")

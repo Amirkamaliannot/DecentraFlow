@@ -4,7 +4,7 @@ import json
 from collections import defaultdict
 from time import sleep
 from flexibleChunkReader import FlexibleChunkReader
-
+import hashlib
 
 START_PORT = 5000
 END_PORT = 5060
@@ -19,6 +19,7 @@ class P2PNode:
         self.running = False
         self.socket = None
         self.nodeLog = True
+        self.nodeID = None
         
     def start(self):
         """Start Node"""
@@ -41,6 +42,7 @@ class P2PNode:
         check_peers_live.daemon = True
         check_peers_live.start()
 
+        self.nodeID = hashlib.md5(f"{self.host}:{self.port}".encode('utf-8')).hexdigest()
 
     def _create_start_listening_socket(self):
 
