@@ -101,7 +101,7 @@ class FileChunkList:
     def __init__(self, DflowHash):
 
         self.DflowHash = DflowHash
-        self._filename = DflowHash+".data"
+        self._filename = DflowHash+".data2"
         if not os.path.exists(self._filename):
             open(self._filename, 'a').close()
 

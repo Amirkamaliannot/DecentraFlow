@@ -117,9 +117,9 @@ class DFlow:
 
     def get_random_unused_chunck(self):
         existing_indexes = set()
-        if os.path.exists(self.file_hash+".data"):
+        if os.path.exists(self.file_hash+".data2"):
             try:
-                with open(self.file_hash+".data", 'r', encoding='utf-8') as f:
+                with open(self.file_hash+".data2", 'r', encoding='utf-8') as f:
                     for line in f:
                         c = json.loads(line)
                         existing_indexes.add(c["index"])
