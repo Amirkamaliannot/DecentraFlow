@@ -1,11 +1,8 @@
 import os
 import hashlib
-import json
 from typing import Iterator, Optional, Tuple, Union
-import numpy as np
 import array
 import zlib
-import struct
 import mmap
 
 class FlexibleChunkReader:
@@ -124,17 +121,25 @@ class FlexibleChunkReader:
 
     def _save_item_positions(self):
         self.index_file = self.hash + '.index'
-
         if not self.item_positions:
             return
+        
+        print(len(self.item_positions))
 
-        # محاسبه‌ی اختلاف‌ها (delta encoding)
         diffs = [self.item_positions[0]]
         for i in range(1, len(self.item_positions)):
             diffs.append(self.item_positions[i] - self.item_positions[i - 1])
 
         max_val = max(diffs)
-        typecode = 'I' if max_val <= 0xFFFFFFFF else 'Q'
+        print(max_val)
+        if max_val <= 0xFF:
+            typecode = 'B'  # 1 byte
+        elif max_val <= 0xFFFF:
+            typecode = 'H'  # 2 bytes
+        elif max_val <= 0xFFFFFFFF:
+            typecode = 'I'  # 4 bytes
+        else:
+            typecode = 'Q'  # 8 bytes
 
         arr = array.array(typecode, diffs)
         compressed = zlib.compress(arr.tobytes(), level=9)
@@ -147,21 +152,20 @@ class FlexibleChunkReader:
         self.index_file = self.hash + '.index'
 
         with open(self.index_file, 'rb') as f:
-            typecode = f.read(1).decode('ascii')  # نوع داده ('I' یا 'Q')
+            typecode = f.read(1).decode('ascii')
             compressed = f.read()
 
         data = zlib.decompress(compressed)
+
         arr = array.array(typecode)
         arr.frombytes(data)
         diffs = arr.tolist()
 
-        # بازسازی لیست اصلی با جمع تجمعی (cumulative sum)
         positions = []
         total = 0
         for diff in diffs:
             total += diff
             positions.append(total)
-
         self.item_positions = positions
                     
     def read_chunk(self, chunk_index: int) -> Optional[str]:
