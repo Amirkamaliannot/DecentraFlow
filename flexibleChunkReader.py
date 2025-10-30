@@ -2,6 +2,11 @@ import os
 import hashlib
 import json
 from typing import Iterator, Optional, Tuple, Union
+import numpy as np
+import array
+import zlib
+import struct
+import mmap
 
 class FlexibleChunkReader:
     
@@ -26,64 +31,139 @@ class FlexibleChunkReader:
         self.mode = mode
         self.file_size = os.path.getsize(filepath)
         
-        # تنظیم delimiter بر اساس mode
         if mode == 'line':
             self.delimiter = '\n'
         elif mode == 'csv':
-            self.delimiter = '\n'  # CSV هم خط به خط
+            self.delimiter = '\n'
         
-        # ساخت ایندکس
+        # creating and saving indexes
+        self.hash = self.get_file_hash()
         self._build_index()
+        self._save_item_positions()
+
     
     def _build_index(self):
-        """creating index base on mode"""
         print(f"🔍 Creating index ({self.mode} mode)...")
         
         if self.mode == 'byte':
             self.total_chunks = (self.file_size + self.items_per_chunk - 1) // self.items_per_chunk
             self.item_positions = None
-            print(f"✅ Byte mode {self.total_chunks} chunk")
+            print(f"✅ Byte mod: {self.total_chunks} chunk")
             return
         
         self.item_positions = [0]
-        
         if self.mode in ['line', 'csv']:
-            # line by line
             with open(self.filepath, 'rb') as f:
-                while True:
-                    line = f.readline()
-                    if not line:
-                        break
-                    self.item_positions.append(f.tell())
+                with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+                    pos = 0
+                    while pos < len(mm):
+                        next_pos = mm.find(b'\n', pos)
+                        if next_pos == -1:
+                            if pos < len(mm):
+                                self.item_positions.append(len(mm))
+                            break
+                        self.item_positions.append(next_pos + 1)
+                        pos = next_pos + 1
         
         elif self.mode == 'token':
             delimiter_bytes = self.delimiter.encode('utf-8') if isinstance(self.delimiter, str) else self.delimiter
             
             with open(self.filepath, 'rb') as f:
-                buffer = b''
-                while True:
-                    chunk = f.read(8192)  # read 8kb
-                    if not chunk:
-                        break
-                    
-                    buffer += chunk
-                    parts = buffer.split(delimiter_bytes)
-                    
-                    # ذخیره موقعیت‌ها به جز آخرین قسمت
-                    for i in range(len(parts) - 1):
-                        current_pos = f.tell() - len(buffer) + sum(len(p) + len(delimiter_bytes) for p in parts[:i+1])
-                        self.item_positions.append(current_pos)
-                    
-                    buffer = parts[-1]  # نگه داشتن آخرین قسمت ناقص
-                
-                if buffer:
-                    self.item_positions.append(f.tell())
+                with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+                    pos = 0
+                    while pos < len(mm):
+                        next_pos = mm.find(delimiter_bytes, pos)
+                        if next_pos == -1:
+                            if pos < len(mm):
+                                self.item_positions.append(len(mm))
+                            break
+                        self.item_positions.append(next_pos + len(delimiter_bytes))
+                        pos = next_pos + len(delimiter_bytes)
         
         self.total_items = len(self.item_positions) - 1
         self.total_chunks = (self.total_items + self.items_per_chunk - 1) // self.items_per_chunk
         
-        print(f"✅ Indexes created: {self.total_items:,} item ، {self.total_chunks} chunk")
+        print(f"✅ index created:{self.total_items:,} items، {self.total_chunks} chunk")
     
+    # def _save_item_positions(self):
+    #         self.index_file = self.hash + '.index'
+    #         with open(self.index_file, 'wb') as f:
+    #             pickle.dump(self.item_positions, f)
+
+    # def _save_item_positions(self):
+    #     self.index_file = self.hash + '.index'
+    #     # تبدیل به numpy array و ذخیره
+    #     np.array(self.item_positions, dtype=np.int64).tofile(self.index_file)
+
+    # def _save_item_positions(self):
+    #     self.index_file = self.hash + '.index'
+    #     # ذخیره delta (تفاوت بین موقعیت‌ها)
+    #     deltas = [self.item_positions[0]]
+    #     for i in range(1, len(self.item_positions)):
+    #         deltas.append(self.item_positions[i] - self.item_positions[i-1])
+        
+    #     with open(self.index_file, 'wb') as f:
+    #         # تعداد آیتم‌ها
+    #         f.write(struct.pack('Q', len(deltas)))
+    #         # delta ها (معمولاً عددهای کوچک)
+    #         for d in deltas:
+    #             f.write(struct.pack('I', d))  # 4 byte به جای 8 byte
+
+    # def _save_item_positions(self):
+    #     self.index_file = self.hash + '.index'
+
+    #     # داده‌ها رو به آرایه‌ی عددی تبدیل می‌کنیم (۸ بایت برای هر عدد)
+    #     arr = array.array('Q', self.item_positions)
+
+    #     # فشرده‌سازی با حداکثر سطح (می‌تونی level=3 بذاری برای سرعت بیشتر)
+    #     compressed = zlib.compress(arr.tobytes(), level=9)
+
+    #     # نوشتن در فایل
+    #     with open(self.index_file, 'wb') as f:
+    #         f.write(compressed)
+
+    def _save_item_positions(self):
+        self.index_file = self.hash + '.index'
+
+        if not self.item_positions:
+            return
+
+        # محاسبه‌ی اختلاف‌ها (delta encoding)
+        diffs = [self.item_positions[0]]
+        for i in range(1, len(self.item_positions)):
+            diffs.append(self.item_positions[i] - self.item_positions[i - 1])
+
+        max_val = max(diffs)
+        typecode = 'I' if max_val <= 0xFFFFFFFF else 'Q'
+
+        arr = array.array(typecode, diffs)
+        compressed = zlib.compress(arr.tobytes(), level=9)
+
+        with open(self.index_file, 'wb') as f:
+            f.write(typecode.encode('ascii'))
+            f.write(compressed)
+
+    def _load_item_positions(self):
+        self.index_file = self.hash + '.index'
+
+        with open(self.index_file, 'rb') as f:
+            typecode = f.read(1).decode('ascii')  # نوع داده ('I' یا 'Q')
+            compressed = f.read()
+
+        data = zlib.decompress(compressed)
+        arr = array.array(typecode)
+        arr.frombytes(data)
+        diffs = arr.tolist()
+
+        # بازسازی لیست اصلی با جمع تجمعی (cumulative sum)
+        positions = []
+        total = 0
+        for diff in diffs:
+            total += diff
+            positions.append(total)
+
+        self.item_positions = positions
+                    
     def read_chunk(self, chunk_index: int) -> Optional[str]:
         """reading one chunk"""
         if chunk_index < 0 or chunk_index >= self.total_chunks:
@@ -174,7 +254,7 @@ class FlexibleChunkReader:
                 'start_byte': chunk_index * self.items_per_chunk,
                 'end_byte': min((chunk_index + 1) * self.items_per_chunk, self.file_size),
                 'size_bytes': chunk_size,
-                'hash': self.get_chunk_hash(chunk_index)
+                'file_hash': self.get_chunk_hash(chunk_index)
             }
         else:
             start_item = chunk_index * self.items_per_chunk
@@ -198,6 +278,7 @@ class FlexibleChunkReader:
             'delimiter': repr(self.delimiter),
             'items_per_chunk': self.items_per_chunk,
             'total_chunks': self.total_chunks,
+            'file_hash': self.hash,
         }
         
         if self.mode != 'byte':
@@ -205,5 +286,22 @@ class FlexibleChunkReader:
             info['avg_chunk_size'] = self.file_size // self.total_chunks if self.total_chunks > 0 else 0
         
         return info
+    
+    def get_file_hash(self, algorithm: str = 'md5') -> str:
+        if algorithm == 'md5':
+            hasher = hashlib.md5()
+        elif algorithm == 'sha256':
+            hasher = hashlib.sha256()
+        else:
+            raise ValueError(f"unknouwn: {algorithm}")
+        
+        # استفاده از buffering سیستم‌عامل
+        with open(self.filepath, 'rb', buffering=0) as f:
+            # خواندن 128MB تکه‌ها
+            for chunk in iter(lambda: f.read(128*1024*1024), b''):
+                hasher.update(chunk)
+        
+        print (hasher.hexdigest())
+        return hasher.hexdigest()
 
 # reader = FlexibleChunkReader('best-dns-wordlist.txt', items_per_chunk=256, mode='line')

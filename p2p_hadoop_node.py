@@ -6,6 +6,8 @@ import time
 import os
 from collections import defaultdict
 from time import sleep
+from flexibleChunkReader import FlexibleChunkReader
+from DFlow import DFlow ,DFlowManager, add_file_as_dflow
 
 START_PORT = 5000
 END_PORT = 5060
@@ -22,6 +24,7 @@ class P2PNode:
         self.running = False
         self.socket = None
         self.nodeLog = True
+        self.DFlowManager = DFlowManager('dflows_real.json')
         
     def start(self):
         """Start Node"""
@@ -53,23 +56,34 @@ class P2PNode:
             instruction = command.split()
             if(command in ["h", 'help']):
                 print(
-                    "/create-job <file>: creating new job" + "\n" +
-                    "/attach-job <job-serial>: attching to a job"+ "\n"
+                    "/create-Dflow <file>: creating new job" + "\n" 
+                    "/attach-Dflow <Dflow-hash>: attching to a job"+ "\n"
+                    "/list-Dflow "+ "\n"
             )
                 
-            if(instruction[0] == "/create-job"):
+            if(instruction[0] == "/create-Dflow"):
 
                 if len(instruction) > 1 and instruction[1]!="" :
                     path = instruction[1]
-                    self.create_job(path)
+                    self.initiate_dflow(path)
                 else:
-                    print("<file> parameter required")
+                    print("<file> parameter required")            
+                    
+            if(instruction[0] == "/attach-Dflow"):
+                if len(instruction) > 1 and instruction[1]!="" :
+                    hash = instruction[1]
+                    
+                else:
+                    print("<file> parameter required")  
+         
+            if(instruction[0] == "/list-Dflow"):
+                for i in self.DFlowManager.list_all():
+                    print(i , ":", i.file_hash)
 
+            sleep(0.1)
 
-            sleep(0.2)
+    def initiate_dflow(self, path):
 
-    def create_job(self, path):
-        
         path.replace('\\ ', ' ').strip()
         if path.startswith('"') and path.endswith('"'):
             path = path[1:-1]
@@ -78,27 +92,28 @@ class P2PNode:
         if not os.path.isfile(path):
             self.log("error : File not found" , "red")
             return
-        # Get file size (in bytes)
-        size = os.path.getsize(path)
-        # Count lines
-        try:
-            with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-                lines = sum(1 for _ in f)
-        except Exception as e:
-            return {"error": str(e)}
-
-        info =  {
-            "file_name": os.path.basename(path),
-            "path": os.path.abspath(path),
-            "size_bytes": size,
-            "line_count": lines
-        }
+        
+        # reader = FlexibleChunkReader(path, items_per_chunk=self.chunk_size, mode='line')
     
-        # Save info as JSON file
-        with open(info['file_name']+ ".json", 'w', encoding='utf-8') as f:
-            json.dump(info, f, indent=4)
+        # info = reader.get_file_info()
 
-        print(f"✅ Info saved to: {info['file_name']+ ".json"}")
+        # info =  {
+        #     "file_name": os.path.basename(path),
+        #     "path": os.path.abspath(path),
+        #     "size_bytes": info['file_size'],
+        #     "chunck_count": info['total_chunks'],
+        #     "line_count": info['total_items'],
+        #     "file_hash": info['file_hash']
+        # }
+        # print(info)
+
+        dflow = add_file_as_dflow(self.DFlowManager, path, items_per_chunk=self.chunk_size, mode='line')
+    
+        # # Save info as JSON file
+        # with open(info['file_name']+ ".json", 'w', encoding='utf-8') as f:
+        #     json.dump(info, f, indent=4)
+
+        # print(f"✅ Info saved to: {info['file_name']+ ".json"}")
 
 
     def _create_start_listening_socket(self):

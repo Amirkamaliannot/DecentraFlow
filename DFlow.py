@@ -2,6 +2,7 @@ import json
 import os
 from datetime import datetime
 from typing import List, Optional, Dict
+from flexibleChunkReader import FlexibleChunkReader
 
 class DFlow:
 
@@ -61,7 +62,7 @@ class DFlowManager:
                 with open(self.json_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                     self.dflows = [DFlow.from_dict(d) for d in data]
-                print(f"✅ {len(self.dflows)} DFlow بارگذاری شد از {self.json_file}")
+                print(f"✅ {len(self.dflows)} DFlow loaded from:{self.json_file}")
             except Exception as e:
                 print(f"❌ Loading Error: {e}")
                 self.dflows = []
@@ -166,14 +167,9 @@ class DFlowManager:
 def add_file_as_dflow(manager: DFlowManager, filepath: str, 
                       items_per_chunk: int = 512, 
                       mode: str = 'line', delimiter: str = '\n'):
-    """
-    اضافه کردن یک فایل به عنوان DFlow
-    (نیاز به FlexibleChunkReader دارد)
-    """
-    from flexibleChunkReader import FlexibleChunkReader
     
     if not os.path.exists(filepath):
-        print(f"❌ فایل پیدا نشد: {filepath}")
+        print(f"❌ Not found: {filepath}")
         return None
     
 
