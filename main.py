@@ -1,27 +1,55 @@
 from p2p_node import P2PNode
-import time
+from DFlow import DFlow ,DFlowManager, add_file_as_dflow
+from time import sleep
 
-# مثال استفاده
+
+chunk_size = 512
+
+def initiate_dflow(path:str, Manager:DFlowManager):
+    dflow = add_file_as_dflow(Manager, path, items_per_chunk=chunk_size, mode='line')
+    return dflow
+
+
 if __name__ == "__main__":
-    # شروع Node
+
     node = P2PNode()
+    manager = DFlowManager('dflows_real.json')
     node.start()
+
+    while(node.running):
+
+        command = input("Enter command (h for help): \n").strip()
+        instruction = command.split()
+        if(command in ["h", 'help']):
+            print(
+                "/create-Dflow <file>: creating new job" + "\n" 
+                "/attach-Dflow <Dflow-hash>: attching to a job"+ "\n"
+                "/list-Dflow "+ "\n"
+        )
+            
+        if(instruction[0] == "/create-Dflow"):
+
+            if len(instruction) > 1 and instruction[1]!="" :
+                path = instruction[1]
+                initiate_dflow(path, manager)
+            else:
+                print("<file> parameter required")            
+                
+        if(instruction[0] == "/attach-Dflow"):
+            if len(instruction) > 1 and instruction[1]!="" :
+                hash = instruction[1]
+                
+            else:
+                print("<file> parameter required")  
+        
+        if(instruction[0] == "/list-Dflow"):
+            for i in manager.list_all():
+                print(i , ":", i.file_hash)        
+                
+        if(instruction[0] == "/exit"):
+            break
+
+        sleep(0.1)
     
-    # مثال: تقسیم و ذخیره یک متن
-    sample_text = """
-        Lorem ipsum was conceived as filler text, form for for for atted in a certain way to enable the presentation of graphic elements in documents, without the need for fo
-    """
-    
-    # print("\n📝 شروع پردازش...")
-    # chunk_hashes = node.split_and_store(sample_text, chunk_size=50)
-    
-    # # اجرای MapReduce برای شمارش کلمات
-    # result = node.map_reduce(chunk_hashes, task_type='word_count')
-    
-    # print("\n📊 نتیجه شمارش کلمات:")
-    # for word, count in sorted(result.items(), key=lambda x: x[1], reverse=True):
-    #     print(f"  {word}: {count}")
-    
-    # نگه داشتن Node برای تست
     input("\n⏸️  Enter for exit ...")
     node.stop()

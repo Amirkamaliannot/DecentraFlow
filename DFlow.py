@@ -168,6 +168,12 @@ def add_file_as_dflow(manager: DFlowManager, filepath: str,
                       items_per_chunk: int = 512, 
                       mode: str = 'line', delimiter: str = '\n'):
     
+    filepath.replace('\\ ', ' ').strip()
+    if filepath.startswith('"') and filepath.endswith('"'):
+        filepath = filepath[1:-1]
+    elif filepath.startswith("'") and filepath.endswith("'"):
+        filepath = filepath[1:-1]
+
     if not os.path.exists(filepath):
         print(f"❌ Not found: {filepath}")
         return None
