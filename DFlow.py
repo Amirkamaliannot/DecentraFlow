@@ -1,15 +1,28 @@
+from setting import Dflow_chunks_queue_limit 
 import json
 import os
 from datetime import datetime
 from typing import List, Optional, Dict
 from flexibleChunkReader import FlexibleChunkReader
+from chunklist import Chunk , ChunkList , FileChunkList
+import random
+
+    
 
 class DFlow:
 
     def __init__(self, filepath: str, file_hash: str, 
                  total_chunks: int, chunk_size: int,
                  mode: str = 'line', delimiter: str = '\n',
-                 metadata: Optional[Dict] = None):
+                 metadata: Optional[Dict] = None,
+                 fileHandle: FlexibleChunkReader | None = None,
+                 script:str = 
+                 '''sum=0
+                        for input in inputs:
+                            sum += input
+                        output.append(sum)'''
+                 ):
+        self.fileHandle=fileHandle
         self.filepath = filepath
         self.file_hash = file_hash
         self.total_chunks = total_chunks
@@ -18,36 +31,69 @@ class DFlow:
         self.delimiter = delimiter
         self.added_at = datetime.now().isoformat()
         self.metadata = metadata or {}
-    
-    def to_dict(self) -> dict:
-        return {
-            'filepath': self.filepath,
-            'file_hash': self.file_hash,
-            'total_chunks': self.total_chunks,
-            'chunk_size': self.chunk_size,
-            'mode': self.mode,
-            'delimiter': self.delimiter,
-            'added_at': self.added_at,
-            'metadata': self.metadata
-        }
-    
-    @classmethod
-    def from_dict(cls, data: dict):
-        dflow = cls(
-            filepath=data['filepath'],
-            file_hash=data['file_hash'],
-            total_chunks=data['total_chunks'],
-            chunk_size=data['chunk_size'],
-            mode=data.get('mode', 'line'),
-            delimiter=data.get('delimiter', '\n'),
-            metadata=data.get('metadata', {})
-        )
-        dflow.added_at = data.get('added_at', datetime.now().isoformat())
-        return dflow
-    
-    def __repr__(self):
-        return f"DFlow({os.path.basename(self.filepath)}, {self.total_chunks} chunks)"
+        self.script = script
+        self.chunks_all:FileChunkList = FileChunkList(file_hash)
+        self.chunks_queue:ChunkList = ChunkList(file_hash)
+        self.chunks_queue_limit = Dflow_chunks_queue_limit
 
+    def start_queue(self):
+
+        while (True):
+            try:
+                for chunk in self.chunks_queue[:]:
+                    if(self.run_over_chunk(chunk)):
+                        self.chunks_all.add(chunk)
+                        self.chunks_queue.remove_by_index(chunk.index)
+                        self.get_new_chunks()
+                        break
+            except:
+                break
+
+
+    def get_new_chunks(self):
+        index = self.get_random_unused_chunck()
+        if(self.fileHandle):
+            chunk_data = self.fileHandle.read_items(index)
+            chunk = Chunk(index, chunk_data)
+            self.add_to_chunks_queue(chunk)
+        else:
+            #get from network
+            pass
+        
+
+    def add_to_chunks_queue(self, chunk:Chunk):
+        if(len(self.chunks_queue) < self.chunks_queue_limit):
+            if(self.chunks_queue.add(chunk)):
+                return True
+        return False
+    
+    def run_over_chunk(self, chunk:Chunk):
+        inputs = chunk.content
+        output = []
+
+        try:
+            exec(self.script)
+        except:
+            return False
+        
+        chunk.result = output
+        return True
+
+    def get_random_unused_chunck(self):
+        existing_indexes = set()
+        with open(self.file_hash+".data2", 'r', encoding='utf-8') as f:
+            for line in f:
+                c = json.loads(line)
+                existing_indexes.add(c["index"])
+
+        all_indexes = set(range(0, self.total_chunks + 1))
+        
+        available = list(all_indexes - existing_indexes)
+
+        if not available:
+            raise ValueError("No available index in the given range")
+        
+        return random.choice(available)
 
 class DFlowManager:
     
@@ -164,6 +210,7 @@ class DFlowManager:
 
 
 
+
 def add_file_as_dflow(manager: DFlowManager, filepath: str, 
                       items_per_chunk: int = 512, 
                       mode: str = 'line', delimiter: str = '\n'):
@@ -182,17 +229,16 @@ def add_file_as_dflow(manager: DFlowManager, filepath: str,
     reader = FlexibleChunkReader(filepath, items_per_chunk=items_per_chunk, 
                                  mode=mode, delimiter=delimiter)
     
-    file_hash = reader.get_file_hash('md5')
-    
     info = reader.get_file_info()
     
     dflow = DFlow(
         filepath=filepath,
-        file_hash=file_hash,
+        file_hash=info['file_hash'],
         total_chunks=info['total_chunks'],
         chunk_size=items_per_chunk,
         mode=mode,
         delimiter=delimiter,
+        fileHandle=reader,
         metadata={
             'file_size': info['file_size'],
             'total_items': info.get('total_items', 0)
