@@ -107,7 +107,7 @@ class FileChunkList:
 
     def add(self, chunk: Chunk):
         """Append a Chunk to file if index is unique"""
-        if self.get_by_index(chunk.index) is not None:
+        if self.get_by_index(chunk.index):
             return False 
 
         with open(self._filename, 'a', encoding='utf-8') as f:
@@ -137,8 +137,15 @@ class FileChunkList:
         return found
 
     def get_by_index(self, index):
+        print('index')
         with open(self._filename, 'r+b') as f:
-            mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+            # Check file size
+            f.seek(0, 2) 
+            size = f.tell()
+            if size == 0:
+                return False 
+            f.seek(0)
+            mm = mmap.mmap(f.fileno(), size, access=mmap.ACCESS_READ)
             start = 0
             while True:
                 end = mm.find(b'\n', start)
@@ -156,20 +163,34 @@ class FileChunkList:
         return False
 
     def __iter__(self):
-        with open(self._filename, 'r+b') as f:
-            mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
-            start = 0
+        f = open(self._filename, 'r+b')
+
+        # Check file size before mmap
+        f.seek(0, 2)
+        size = f.tell()
+        if size == 0:
+            f.close()
+            return  # Empty iterator
+
+        f.seek(0)
+        mm = mmap.mmap(f.fileno(), size, access=mmap.ACCESS_READ)
+        start = 0
+        try:
             while True:
                 end = mm.find(b'\n', start)
                 if end == -1:
                     break
                 line = mm[start:end].decode('utf-8')
                 c = json.loads(line)
+
                 chunk = Chunk(c["index"], c.get("content", []))
                 chunk.result = c.get("result", None)
+
                 yield chunk
                 start = end + 1
+        finally:
             mm.close()
+            f.close()
 
     def __len__(self):
         return sum(1 for _ in self.__iter__())
