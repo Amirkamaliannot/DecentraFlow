@@ -1,9 +1,10 @@
 import os
 import hashlib
 from typing import Iterator, Optional, Tuple, Union
-import array
-import zlib
+# import array
+# import zlib
 import mmap
+import sqlite3
 
 class FlexibleChunkReader:
     
@@ -13,24 +14,14 @@ class FlexibleChunkReader:
                  mode: str = 'line',
                  total_items = 0 #just for loading
                  ):
-        """
-        Args:
-            filepath: مسیر فایل
-            items_per_chunk: تعداد آیتم در هر chunk
-            delimiter: جداکننده (مثل '\n', ',', ' ', '\t')
-            mode: حالت خواندن:
-                - 'line': بر اساس خط (delimiter='\n')
-                - 'token': بر اساس جداکننده دلخواه
-                - 'byte': بر اساس تعداد بایت ثابت
-                - 'csv': برای فایل‌های CSV
-        """
+
         self.filepath = filepath
         self.items_per_chunk = items_per_chunk
         self.delimiter = delimiter
         self.mode = mode
         self.file_size = os.path.getsize(filepath)
         self.total_items = total_items
-        
+
         if mode == 'line':
             self.delimiter = '\n'
         elif mode == 'csv':
@@ -38,20 +29,15 @@ class FlexibleChunkReader:
         
         # creating and saving indexes
         self.hash = self.get_file_hash()
-
-        if(os.path.exists(self.hash+".index")):
-            try:
-                
-                self._load_item_positions()
-                self.total_items = len(self.item_positions) - 1
-                self.total_chunks = (self.total_items + self.items_per_chunk - 1) // self.items_per_chunk
-            except:
-                self._build_index()
+        self.conn = sqlite3.connect(f"{self.hash}.db")
+        self.DBcreate_table()
+        self._load_item_positions_DB()
+        if(hasattr(self, "item_positions")):
+            self.total_items = len(self.item_positions) - 1
+            self.total_chunks = (self.total_items + self.items_per_chunk - 1) // self.items_per_chunk
         else:
             self._build_index()
-
-
-        self._save_item_positions()
+            self._save_item_positionsDB()
 
     # def handle_index
 
@@ -98,92 +84,57 @@ class FlexibleChunkReader:
         
         print(f"✅ index created:{self.total_items:,} items، {self.total_chunks} chunk")
     
-    # def _save_item_positions(self):
-    #         self.index_file = self.hash + '.index'
-    #         with open(self.index_file, 'wb') as f:
-    #             pickle.dump(self.item_positions, f)
+    def DBcreate_table(self):
+        cur = self.conn.cursor()
+        try:
+            cur.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?;", 
+                ('indexes',)
+            )
+            if cur.fetchone() is None: 
+                cur.execute("""
+                CREATE TABLE indexes (
+                    id INTEGER PRIMARY KEY,
+                    offset INTEGER NOT NULL
+                );
+                """)
+                self.conn.commit()
+        finally:
+            cur.close()
 
-    # def _save_item_positions(self):
-    #     self.index_file = self.hash + '.index'
-    #     # تبدیل به numpy array و ذخیره
-    #     np.array(self.item_positions, dtype=np.int64).tofile(self.index_file)
+    def _load_item_positions_DB(self):
+        cur = self.conn.cursor()
+        try:
+            cur.execute(
+                "select * from indexes order by id"
+                )
+            rows = cur.fetchall()
+            if(len(rows)):
+                self.item_positions = [0]
+                for row in rows:
+                    self.item_positions.append(row[1])
+        finally:
+            cur.close()  
 
-    # def _save_item_positions(self):
-    #     self.index_file = self.hash + '.index'
-    #     # ذخیره delta (تفاوت بین موقعیت‌ها)
-    #     deltas = [self.item_positions[0]]
-    #     for i in range(1, len(self.item_positions)):
-    #         deltas.append(self.item_positions[i] - self.item_positions[i-1])
-        
-    #     with open(self.index_file, 'wb') as f:
-    #         # تعداد آیتم‌ها
-    #         f.write(struct.pack('Q', len(deltas)))
-    #         # delta ها (معمولاً عددهای کوچک)
-    #         for d in deltas:
-    #             f.write(struct.pack('I', d))  # 4 byte به جای 8 byte
-
-    # def _save_item_positions(self):
-    #     self.index_file = self.hash + '.index'
-
-    #     # داده‌ها رو به آرایه‌ی عددی تبدیل می‌کنیم (۸ بایت برای هر عدد)
-    #     arr = array.array('Q', self.item_positions)
-
-    #     # فشرده‌سازی با حداکثر سطح (می‌تونی level=3 بذاری برای سرعت بیشتر)
-    #     compressed = zlib.compress(arr.tobytes(), level=9)
-
-    #     # نوشتن در فایل
-    #     with open(self.index_file, 'wb') as f:
-    #         f.write(compressed)
-
-    def _save_item_positions(self):
-        self.index_file = self.hash + '.index'
+    def _save_item_positionsDB(self):
         if not self.item_positions:
             return
+        cur = self.conn.cursor()
+        try:
+            for idx, p in enumerate(self.item_positions):
+                cur.execute(
+                    """
+                    INSERT INTO indexes (id, offset)
+                    VALUES (?, ?)
+                    """,
+                    (idx, p)
+                )
 
-        diffs = [self.item_positions[0]]
-        for i in range(1, len(self.item_positions)):
-            diffs.append(self.item_positions[i] - self.item_positions[i - 1])
+            # Commit once after all inserts
+            self.conn.commit()
 
-        max_val = max(diffs)
-        if max_val <= 0xFF:
-            typecode = 'B'  # 1 byte
-        elif max_val <= 0xFFFF:
-            typecode = 'H'  # 2 bytes
-        elif max_val <= 0xFFFFFFFF:
-            typecode = 'I'  # 4 bytes
-        else:
-            typecode = 'Q'  # 8 bytes
-
-        arr = array.array(typecode, diffs)
-        compressed = zlib.compress(arr.tobytes(), level=9)
-
-        with open(self.index_file, 'wb') as f:
-            f.write(typecode.encode('ascii'))
-            f.write(compressed)
-
-    def _load_item_positions(self):
-        self.index_file = self.hash + '.index'
-
-        with open(self.index_file, 'rb') as f:
-            typecode = f.read(1).decode('ascii')
-            compressed = f.read()
-
-        data = zlib.decompress(compressed)
-
-        arr = array.array(typecode)
-        arr.frombytes(data)
-        diffs = arr.tolist()
-
-        positions = []
-        total = 0
-        for diff in diffs:
-            total += diff
-            positions.append(total)
-
-        if(len(positions)-1 == self.total_items):
-            self.item_positions = positions
-        else:
-            raise Exception("Not Matched.")
+        finally:
+            cur.close()
                     
     def read_chunk(self, chunk_index: int) -> Optional[str]:
         """reading one chunk"""

@@ -4,11 +4,11 @@ import os
 from datetime import datetime
 from typing import List, Optional, Dict
 from flexibleChunkReader import FlexibleChunkReader
-from chunklist import Chunk , ChunkList , FileChunkList
+from chunklist import Chunk
 import random
 from functions import is_file_in_my_disk
 from tqdm import tqdm
-import time
+import sqlite3
 
 
 class DFlow:
@@ -31,13 +31,15 @@ class DFlow:
         self.added_at = datetime.now().isoformat()
         self.metadata = metadata or {}
         self.script = script
-        self.chunks_all:FileChunkList = FileChunkList(file_hash) # finished chunks
-        self.chunks_queue:ChunkList = ChunkList(file_hash)
         self.chunks_queue_limit = Dflow_chunks_queue_limit
-        self.unused_chunck_list = []
-        self.update_unused_chunck_list()
 
-        
+        print(1111111111112222222222)
+        self.conn = sqlite3.connect(f"{self.file_hash}.db")
+        print(1111111111112222222222333333333333)
+        self.DBcreate_table()
+
+        self.unused_chunck_list = []
+        self.update_unused_chunck_list()        
 
 
     @classmethod
@@ -69,21 +71,94 @@ class DFlow:
             'script': self.script,
         }
 
+    def DBcreate_table(self):
+        cur = self.conn.cursor()
+        try:
+            cur.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?;", 
+                ('chunks',)
+            )
+            if cur.fetchone() is None: 
+                cur.execute("""
+                CREATE TABLE chunks (
+                    chunk_index INTEGER PRIMARY KEY,
+                    content BLOB NOT NULL,
+                    result BLOB NOT NULL,
+                    status INTEGER NOT NULL DEFAULT 0
+                );
+                """)
+                self.conn.commit()
+        finally:
+            cur.close()
+
+    def get_chunks_queue(self):
+        cur = self.conn.cursor()
+        try:
+            cur.execute(
+                "select chunk_index from chunks where status=0 order by chunk_index"
+                )
+            rows = cur.fetchall()
+            out = []
+            for row in rows:
+                out.append(row[0])
+            return out
+        
+        finally:
+            cur.close()    
+            
+    def get_finished_queue(self):
+        cur = self.conn.cursor()
+        try:
+            cur.execute(
+                "select chunk_index from chunks where status=1 order by chunk_index"
+                )
+            rows = cur.fetchall()
+            out = []
+            for row in rows:
+                out.append(row[0])
+            return out
+        
+        finally:
+            cur.close()
+
+    def set_chunk_finished(self, chunk_index, result):
+        cur = self.conn.cursor()
+        result_blob = json.dumps(result).encode("utf-8")
+        try:
+            cur.execute(
+                "UPDATE chunks SET status=1 ,result=? WHERE chunk_index = ?;", (result_blob,chunk_index)
+                )
+            self.conn.commit()
+        
+        finally:
+            cur.close()    
+            
+    def set_chunk_error(self, chunk_index):
+        cur = self.conn.cursor()
+        try:
+            cur.execute(
+                "UPDATE chunks SET status=2 WHERE chunk_index = ?;", (chunk_index,)
+                )
+            self.conn.commit()
+        
+        finally:
+            cur.close()
+
+
+
     def start_queue(self):
         while (True):
+            chunks_queue = self.get_chunks_queue()
             try:
-                for chunk in self.chunks_queue[:]:
+                for chunk_index in chunks_queue:
+                    chunk_data = self.fileHandle.read_items(chunk_index)
+                    chunk = Chunk(chunk_index, chunk_data)
                     if(self.run_over_chunk(chunk)):
-                        print(1)
-                        self.chunks_all.add(chunk)
-                        print(1)
-                        self.chunks_queue.remove_by_index(chunk.index)
-                        print(1)
+                        self.set_chunk_finished(chunk_index, chunk.result)
                         self.get_new_chunks()
-                        print(1)
                         break
                     else:
-                        self.chunks_queue.remove_by_index(chunk.index)
+                        self.set_chunk_finished(chunk_index)
                         self.get_new_chunks()
 
             except Exception as e:
@@ -91,19 +166,15 @@ class DFlow:
                 break
 
     def fill_chunks_queue(self):
-        print(len(self.unused_chunck_list))
-        print(len(self.chunks_queue._chunks))
-        print(self.total_chunks)
         while(True):
-            if(len(self.chunks_queue) < self.chunks_queue_limit):
+            chunks_queue = self.get_chunks_queue()
+            if(len(chunks_queue) < self.chunks_queue_limit):
                 self.get_new_chunks()
             else:
                 break
-        print(len(self.unused_chunck_list))
 
     def get_new_chunks(self):
         index = self.get_random_unused_chunck()
-        print(index)
         if(self.fileHandle):
             chunk_data = self.fileHandle.read_items(index)
             chunk = Chunk(index, chunk_data)
@@ -115,10 +186,24 @@ class DFlow:
         
 
     def add_to_chunks_queue(self, chunk:Chunk):
-        if(len(self.chunks_queue) < self.chunks_queue_limit):
-            if(self.chunks_queue.add(chunk)):
-                return True
-        return False
+        chunks_queue = self.get_chunks_queue()
+        print(len(chunks_queue))
+        if(len(chunks_queue) > self.chunks_queue_limit):return
+        
+        content_blob = json.dumps(chunk.content).encode("utf-8")
+        result_blob = json.dumps([]).encode("utf-8")  # empty result
+        cur = self.conn.cursor()
+        try:
+            cur.execute(
+                """
+                INSERT INTO chunks (chunk_index, content, result, status)
+                VALUES (?, ?, ?, 0)
+                """,
+                (chunk.index, content_blob, result_blob)
+            )
+            self.conn.commit()
+        finally:
+            cur.close()
     
     def run_over_chunk(self, chunk:Chunk):
         inputs = chunk.content
@@ -137,17 +222,18 @@ class DFlow:
         return True
 
     def update_unused_chunck_list(self):
+
         existing_indexes = set()
-        if os.path.exists(self.file_hash+".data2"):
-            try:
-                with open(self.file_hash+".data2", 'r', encoding='utf-8') as f:
-                    for line in f:
-                        c = json.loads(line)
-                        existing_indexes.add(c["index"])
-            except:pass
-        
-        for i in self.chunks_queue:
-            existing_indexes.add(i.index)
+        cur = self.conn.cursor()
+        try:
+            cur.execute(
+                "select chunk_index from chunks"
+                )
+            rows = cur.fetchall()
+            for row in rows:
+                existing_indexes.add(row[0])
+        finally:
+            cur.close()
 
         all_indexes = set(range(0, self.total_chunks))
         available = list(all_indexes - existing_indexes)
@@ -155,11 +241,11 @@ class DFlow:
 
 
     def get_random_unused_chunck(self):
-
         if not self.unused_chunck_list:
             raise ValueError("No available index in the given range")
-        
         return random.choice( self.unused_chunck_list)
+
+
 
 class DFlowManager:
     
