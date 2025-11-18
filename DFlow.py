@@ -35,6 +35,10 @@ class DFlow:
         self.chunks_all:FileChunkList = FileChunkList(file_hash)
         self.chunks_queue:ChunkList = ChunkList(file_hash)
         self.chunks_queue_limit = Dflow_chunks_queue_limit
+        self.unused_chunck_list = []
+        self.update_unused_chunck_list()
+
+        
 
 
     @classmethod
@@ -66,7 +70,6 @@ class DFlow:
         }
 
     def start_queue(self):
-
         while (True):
             try:
                 for chunk in self.chunks_queue[:]:
@@ -79,11 +82,15 @@ class DFlow:
                 break
 
     def fill_chunks_queue(self):
+        print(len(self.unused_chunck_list))
+        print(len(self.chunks_queue._chunks))
+        print(self.total_chunks)
         while(True):
             if(len(self.chunks_queue) < self.chunks_queue_limit):
                 self.get_new_chunks()
             else:
                 break
+        print(len(self.unused_chunck_list))
 
     def get_new_chunks(self):
         index = self.get_random_unused_chunck()
@@ -92,6 +99,7 @@ class DFlow:
             chunk_data = self.fileHandle.read_items(index)
             chunk = Chunk(index, chunk_data)
             self.add_to_chunks_queue(chunk)
+            self.unused_chunck_list.remove(index)
         else:
             #get from network
             pass
@@ -115,7 +123,7 @@ class DFlow:
         chunk.result = output
         return True
 
-    def get_random_unused_chunck(self):
+    def update_unused_chunck_list(self):
         existing_indexes = set()
         if os.path.exists(self.file_hash+".data2"):
             try:
@@ -124,15 +132,21 @@ class DFlow:
                         c = json.loads(line)
                         existing_indexes.add(c["index"])
             except:pass
-
-        all_indexes = set(range(0, self.total_chunks + 1))
         
-        available = list(all_indexes - existing_indexes)
+        for i in self.chunks_queue:
+            existing_indexes.add(i.index)
 
-        if not available:
+        all_indexes = set(range(0, self.total_chunks))
+        available = list(all_indexes - existing_indexes)
+        self.unused_chunck_list = available
+
+
+    def get_random_unused_chunck(self):
+
+        if not self.unused_chunck_list:
             raise ValueError("No available index in the given range")
         
-        return random.choice(available)
+        return random.choice( self.unused_chunck_list)
 
 class DFlowManager:
     

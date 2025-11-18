@@ -39,7 +39,6 @@ class ChunkList:
             self._save_file() 
 
     def get_chunk_by_index(self, index):
-        """برگرداندن Chunk با index مشخص"""
         return self._index_map.get(index)
 
     def _save_file(self):

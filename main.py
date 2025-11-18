@@ -49,6 +49,12 @@ if __name__ == "__main__":
                             )
                         elif(sec_comn in ['/start']):
                             dflow.fill_chunks_queue()
+                            
+
+
+
+
+
                         elif(sec_comn in ['/status']):
                             print()
                             if(dflow.fileHandle): print('Local')
