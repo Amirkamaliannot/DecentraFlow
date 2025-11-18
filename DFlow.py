@@ -7,7 +7,9 @@ from flexibleChunkReader import FlexibleChunkReader
 from chunklist import Chunk , ChunkList , FileChunkList
 import random
 from functions import is_file_in_my_disk
-    
+from tqdm import tqdm
+import time
+
 
 class DFlow:
 
@@ -17,10 +19,7 @@ class DFlow:
                  metadata: Optional[Dict] = None,
                  fileHandle: FlexibleChunkReader | None = None,
                  script:str = 
-                 '''sum=0
-                        for input in inputs:
-                            sum += input
-                        output.append(sum)'''
+                 '''from tqdm import tqdm\nfinal=0\nfor input in tqdm(range(len(inputs))):\n final = inputs[input]\n output.append(final)'''
                  ):
         self.fileHandle=fileHandle
         self.filepath = filepath
@@ -32,7 +31,7 @@ class DFlow:
         self.added_at = datetime.now().isoformat()
         self.metadata = metadata or {}
         self.script = script
-        self.chunks_all:FileChunkList = FileChunkList(file_hash)
+        self.chunks_all:FileChunkList = FileChunkList(file_hash) # finished chunks
         self.chunks_queue:ChunkList = ChunkList(file_hash)
         self.chunks_queue_limit = Dflow_chunks_queue_limit
         self.unused_chunck_list = []
@@ -51,7 +50,8 @@ class DFlow:
             mode=data.get('mode', 'line'),
             delimiter=data.get('delimiter', '\n'),
             metadata=data.get('metadata', {}),
-            fileHandle = fileHandle
+            fileHandle = fileHandle,
+            script = data.get('script', '')
         )
         dflow.added_at = data.get('added_at', datetime.now().isoformat())
         return dflow
@@ -74,11 +74,20 @@ class DFlow:
             try:
                 for chunk in self.chunks_queue[:]:
                     if(self.run_over_chunk(chunk)):
+                        print(1)
                         self.chunks_all.add(chunk)
+                        print(1)
+                        self.chunks_queue.remove_by_index(chunk.index)
+                        print(1)
+                        self.get_new_chunks()
+                        print(1)
+                        break
+                    else:
                         self.chunks_queue.remove_by_index(chunk.index)
                         self.get_new_chunks()
-                        break
-            except:
+
+            except Exception as e:
+                print(e)
                 break
 
     def fill_chunks_queue(self):
@@ -115,11 +124,15 @@ class DFlow:
         inputs = chunk.content
         output = []
 
+        print(f"Chunk {chunk.index} running ...")
         try:
             exec(self.script)
-        except:
+        except Exception as e:
+
+            print(f"Chunck failed: {e} {self.script}")
             return False
         
+        print(f'chunck {chunk.index} done')
         chunk.result = output
         return True
 
